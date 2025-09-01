@@ -1,4 +1,8 @@
 import { mbToBytes } from '@/lib/utils';
+import { abortMPU } from '@/services/multipart/abortMPU';
+import { completeMPU } from '@/services/multipart/completeMPU';
+import { initiateMPU } from '@/services/multipart/initiateMPU';
+import { uploadChunk } from '@/services/multipart/uploadChunk';
 import { useState } from 'react';
 import { toast, Toaster } from 'sonner';
 import { Button } from './ui/button';
@@ -14,10 +18,34 @@ function MultipartUploads() {
       return;
     }
 
-    const chunkSizes = mbToBytes(5);
-    const totalChunks = Math.ceil(file.size / chunkSizes);
+    const chunkSize = mbToBytes(5);
+    const totalChunks = Math.ceil(file.size / chunkSize);
 
-    toast('Upload!');
+    const { key, parts, uploadId } = await initiateMPU({ fileName: file.name, totalChunks });
+
+    try {
+      const uploadedParts = await Promise.all(parts.map(async ({ url, partNumber }, index) => {
+        const chunkStart = index * chunkSize;
+        const chunkEnd = Math.min(chunkStart + chunkSize, file.size);
+
+        const fileChunk = file.slice(chunkStart, chunkEnd);
+
+        const { entityTag } = await uploadChunk({ url, chunk: fileChunk })
+
+        return {
+          partNumber,
+          entityTag
+        }
+      }));
+
+      await completeMPU({ fileKey: key, uploadId, parts: uploadedParts });
+
+      toast.success('Arquivo enviado com sucesso!');
+    } catch {
+      await abortMPU({ fileKey: key, uploadId });
+
+      toast.error('Ocorreu um erro ao fazer o upload do arquivo!')
+    }
   }
 
   return (
